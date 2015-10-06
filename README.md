@@ -4,7 +4,7 @@
 
 # Convert single amap
 
-   python converter.py amap-path.amap output-base-name 
+    python converter.py amap-path.amap output-base-name 
 
 For example `python converter.py states.amap out/states`
 
