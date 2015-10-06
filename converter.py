@@ -3,6 +3,7 @@
 import zipfile
 import struct
 import shapefile
+import sys
 
 def read_zip(path):
     with zipfile.ZipFile(path, 'r') as myzip:
@@ -35,9 +36,8 @@ def read_amap(path):
 
     columns = []
     
-    print "Data table: (key, name)"
     for _ in range(0, columns_count):
-        col = {}
+        col = {'max_len': 0}
         (col['is_key'], offset) = read_bool(bytes, offset)
         (col['name'], offset) = read_string(bytes, offset)
         columns.append(col)
@@ -55,9 +55,14 @@ def read_amap(path):
         
         (group['name'], offset) = read_string(bytes, offset)
         
-        for _ in range(0, columns_count - 1):
-            column = {}
+        column = columns[0]
+        column['max_len'] = max(column['max_len'], len(group['name'].encode('utf-8')))
+        group['columns'].append(group['name'])
+        
+        for idx in range(0, columns_count - 1):
+            column = columns[idx+1]
             (c, offset) = read_string(bytes, offset)
+            column['max_len'] = max(column['max_len'], len(c.encode('utf-8')))
             group['columns'].append(c)
 
         (is_transformed, offset) = read_bool(bytes, offset)
@@ -67,6 +72,7 @@ def read_amap(path):
             (group['transformation']['dy'], offset) = read_double(bytes, offset)
             (group['transformation']['sx'], offset) = read_double(bytes, offset)
             (group['transformation']['sy'], offset) = read_double(bytes, offset)
+            print "WARN: transformations not supported", group["name"]
 
         group['label_pt'] = {}
         (group['label_pt']['lat'], offset) = read_double(bytes, offset)
@@ -74,25 +80,35 @@ def read_amap(path):
 
         group['polygons'] = []
         (polygons, offset) = read_int(bytes, offset)
-        print "Polygons count:", polygons
         for _ in range(0, polygons):
             poly = []
             (pts, offset) = read_int(bytes, offset)
             for _ in range(0, pts):
                 (p_long, offset) = read_double(bytes, offset)
                 (p_lat, offset) = read_double(bytes, offset)
-                poly.append({"lat": p_lat,
+                poly.append({"lat": - p_lat,
                              "long": p_long})
+            
             group['polygons'].append(poly)
         amap['groups'].append(group)
+    amap['columns'] = columns
     return amap
 
 def write_shp(amap, path):
-    w = shapefile.Writer()
-    for group in amap['groups']:
-        for poly in group['polygons']:
-            w.poly(parts=[])
-            w.record('Create', 'Polygon')
-    w.save()
+    w = shapefile.Writer(shapefile.POLYGON)
+    w.autoBalance = 1
+    for c in amap['columns']:
+        w.field(c['name'].encode('utf-8'), 'C', c['max_len'])
+    w.field('latitude', 'F')
+    w.field('longitude', 'F')
 
-print read_amap('states.amap')
+    for group in amap['groups']:
+        w.poly(parts=map(lambda poly: map(lambda pt: [pt['long'], pt['lat']], poly), group['polygons']))
+        w.record(*(group['columns'] + [ -group['label_pt']['lat'], group['label_pt']['long']]))
+    w.save(path)
+
+if __name__ == '__main__':
+    if len(sys.argv) < 3:
+        print "Usage: converter src.amap dest-base-name"
+    else:
+        write_shp(read_amap(sys.argv[1]), sys.argv[2])
