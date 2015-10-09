@@ -2,5 +2,5 @@
 
 for f in $(ls "$1")
 do
-  $(python converter.py "$1/$f" "$2/$f")
+  $(python converter.py "$1/$f" "$2/${f%%.*}/${f%%.*}")
 done
