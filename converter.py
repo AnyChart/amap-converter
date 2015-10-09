@@ -4,6 +4,8 @@ import zipfile
 import struct
 import shapefile
 import sys
+import json
+import os
 
 def read_zip(path):
     with zipfile.ZipFile(path, 'r') as myzip:
@@ -107,8 +109,62 @@ def write_shp(amap, path):
         w.record(*(group['columns'] + [ -group['label_pt']['lat'], group['label_pt']['long']]))
     w.save(path)
 
+def generate_geojson(amap):
+    features = []
+    for group in amap['groups']:
+        props = {}
+        for idx,c in enumerate(amap["columns"]):
+            props[c['name']] = group["columns"][idx]
+        props["label_lat"] = -group['label_pt']['lat']
+        props["label_lon"] = group['label_pt']['long']
+        coords = map(lambda poly: [map(lambda pt: [pt['long'], pt['lat']], poly)], group['polygons'])
+        geometry = {"type": "MultiPolygon", "coordinates": coords}
+        features.append({"type":"Feature", "properties": props, "geometry": geometry})
+        
+    return {"type": "FeatureCollection",
+            "features": features}
+
+def write_geojson(geojson, path):
+    with open(path + ".json", 'w') as outfile:
+        json.dump(geojson, outfile)
+
+def write_mapjs(map_name, geojson, path):
+    with open(path + ".js", 'w') as outfile:
+        outfile.write("window['anychart']=window['anychart']||{};window['anychart']['maps']=window['anychart']['maps']||{};window['anychart']['maps']['"+map_name+"']=" + json.dumps(geojson))
+
+def write_map_sample(map_name, path):
+    with open(path + ".html", 'w') as outfile:
+        outfile.write("""<!doctype html>
+<html>
+  <head>
+    <script type='text/javascript' src='http://cdn.anychart.com/js/latest/anymap.min.js'></script>
+    <script type='text/javascript' src='./{0}.js'></script>
+    <style type='text/css'>
+        html, body, #container {{ width: 100%; height: 100%; margin: 0; padding: 0; }}
+    </style>
+  </head>
+  <body>
+    <div id='container'></div>
+    <script>
+    anychart.onDocumentReady(function() {{
+      // create map
+      map = anychart.map();
+      map.geoData(anychart.maps['{0}']);
+      map.container('container');
+      map.draw();
+    }});
+    </script>
+  </body>
+</html>""".format(map_name))
+        
 if __name__ == '__main__':
     if len(sys.argv) < 3:
         print "Usage: converter src.amap dest-base-name"
     else:
-        write_shp(read_amap(sys.argv[1]), sys.argv[2])
+        amap = read_amap(sys.argv[1])
+        out = sys.argv[2]
+        geojson = generate_geojson(amap)
+        write_shp(amap, out)
+        write_geojson(geojson, out)
+        write_mapjs(os.path.basename(out), geojson, out)
+        write_map_sample(os.path.basename(out), out)
